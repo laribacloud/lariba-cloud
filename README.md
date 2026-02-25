@@ -9,15 +9,8 @@ Lariba Cloud is a scalable cloud computing platform designed to provide secure, 
 - Scalable architecture
 - Automation-ready deployment
 
-## 🛠 Tech Stack
-- Python
-- Docker
-- GitHub Actions
-- Cloud infrastructure tools
+## 📂 Project Structure
+See the folder structure for placeholders in `src/`, `docs/`, `tests/`, `scripts/`, and `infrastructure/`.
 
 ## 📌 Status
 Project in active development.
-
----
-
-Built by Lariba Cloud
