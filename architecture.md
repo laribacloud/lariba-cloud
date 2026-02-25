@@ -28,10 +28,7 @@ The Lariba Cloud system architecture defines how the different components intera
 
 ### Overview
 
-Users
-│
-▼
-Frontend (optional dashboard/web interface)
+Users -> Frontend (optional dashboard/web interface)
 │
 ▼
 Backend API (FastAPI)
@@ -282,11 +279,108 @@ jobs:
         run: pytest tests/
 
   deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    steps:
-      - uses: actions/checkout@v3
-      - name: Build Docker image
-        run: docker build -t lariba-cloud .
-      - name: Push & Deploy
-        run: echo "Deployment steps here (e.g., AWS ECS or EC2)"
+  runs-on: ubuntu-latest
+  needs: build-and-test
+  steps:
+    - uses: actions/checkout@v3
+    - name: Build Docker image
+      run: docker build -t lariba-cloud .
+    - name: Push & Deploy
+      run: echo "Deployment steps here (e.g., AWS ECS or EC2)"
+```
+**Notes**
+
+- CI/CD ensures fast feedback for developers and reduces manual errors  
+- Modular workflows allow adding new services, testing, and deployment pipelines easily  
+- Future automation can include:
+  - Scheduled tasks for backups  
+  - Automated scaling of services  
+  - Notifications on failures or deployment events  
+
+  
+---
+
+# **How to Add It**
+
+### Option 1: GitHub Web
+1. Open `docs/architecture.md`  
+2. Click **Edit**  
+3. Paste Step 7 content below Step 6  
+4. Commit directly to main branch
+
+### Option 2: Local + Git
+```bash id="y7f2tr"
+nano docs/architecture.md   # paste Step 7 content
+git add docs/architecture.md
+git commit -m "Add Step 7: CI/CD & Automation Planning"
+git push origin main
+```
+## Step 8: Documentation & Wiki Setup
+
+Proper documentation ensures Lariba Cloud is maintainable, scalable, and easy for future contributors to understand.
+
+### Repository Documentation Structure
+
+| File / Section        | Purpose |
+|-----------------------|----------|
+| `README.md`           | Project overview, installation guide, usage instructions |
+| `docs/architecture.md`| System architecture and technical planning |
+| `docs/api-spec.md`    | Detailed API endpoint documentation |
+| `docs/deployment-guide.md` | Deployment instructions and cloud setup |
+| `LICENSE`             | Defines legal usage and distribution rights |
+
+### README Structure
+
+The README should include:
+
+1. Project Overview  
+2. Features  
+3. Tech Stack  
+4. Installation Instructions  
+5. Running Locally  
+6. API Overview  
+7. Deployment Summary  
+8. Contribution Guidelines  
+
+### GitHub Wiki (Optional)
+
+Enable GitHub Wiki for extended documentation:
+
+- Detailed architecture explanations
+- Database schema diagrams
+- Cloud deployment walkthrough
+- Troubleshooting guides
+- Future roadmap
+
+### Contribution Guidelines
+
+Add a `CONTRIBUTING.md` file including:
+
+- Branch naming conventions
+- Pull request process
+- Code style rules
+- Commit message standards
+
+### Issue & Project Management
+
+- Use GitHub Issues to track:
+  - Bugs
+  - Feature requests
+  - Improvements
+- Use GitHub Projects to manage:
+  - Roadmap
+  - Sprint planning
+  - Task tracking
+
+### Notes
+
+- Clear documentation improves scalability and team collaboration.
+- Keeping documentation updated is part of the development lifecycle.
+- Professional documentation increases credibility for investors and contributors.
+
+---
+
+**Lariba Cloud Architecture Documentation Complete (Phase 1)**
+
+The foundational planning phase is now complete.  
+Next phase: Begin implementation of backend services and database models.
