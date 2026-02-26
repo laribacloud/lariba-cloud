@@ -9,6 +9,7 @@ from src.database.db import Base
 
 class ProjectMember(Base):
     __tablename__ = "project_members"
+    __table_args__ = {"extend_existing": True}
 
     project_id = Column(
         UUID(as_uuid=True),
@@ -24,7 +25,6 @@ class ProjectMember(Base):
         nullable=False,
     )
 
-    # "admin" | "member"
     role = Column(String(20), nullable=False, default="member")
 
     created_at = Column(

@@ -8,8 +8,8 @@ from sqlalchemy.orm import relationship
 from src.database.db import Base
 
 
-class Project(Base):
-    __tablename__ = "projects"
+class OrganizationMember(Base):
+    __tablename__ = "organization_members"
     __table_args__ = {"extend_existing": True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -21,15 +21,14 @@ class Project(Base):
         index=True,
     )
 
-    owner_id = Column(
+    user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
-    name = Column(String, nullable=False)
-    slug = Column(String, nullable=False, index=True)
+    role = Column(String, nullable=False, default="member")
 
     created_at = Column(
         DateTime(timezone=True),
@@ -37,9 +36,5 @@ class Project(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    # relationships
-    owner = relationship("User", back_populates="projects")
-    organization = relationship("Organization", back_populates="projects")
-
-    api_keys = relationship("ApiKey", back_populates="project", cascade="all, delete-orphan")
-    members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+    organization = relationship("Organization", back_populates="members")
+    user = relationship("User", back_populates="organization_memberships")

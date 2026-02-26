@@ -24,10 +24,19 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    # Owner relationship
-    projects = relationship("Project", back_populates="owner")
+    # owns projects (legacy / convenience)
+    projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
 
-    # Membership relationship
+    # owns orgs
+    organizations = relationship("Organization", back_populates="owner", cascade="all, delete-orphan")
+
+    # membership tables
+    organization_memberships = relationship(
+        "OrganizationMember",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     project_memberships = relationship(
         "ProjectMember",
         back_populates="user",
