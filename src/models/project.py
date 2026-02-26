@@ -1,6 +1,7 @@
 from uuid import uuid4
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, ForeignKey, String
+from sqlalchemy import Column, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -23,6 +24,11 @@ class Project(Base):
     name = Column(String, nullable=False)
     slug = Column(String, nullable=False, index=True)
 
-    # relations
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
     owner = relationship("User", back_populates="projects")
     api_keys = relationship("ApiKey", back_populates="project", cascade="all, delete-orphan")

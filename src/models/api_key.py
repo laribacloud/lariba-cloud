@@ -21,33 +21,18 @@ class ApiKey(Base):
         index=True,
     )
 
-    # matches DB: NOT NULL
     name = Column(String, nullable=False)
-
-    # matches DB: NOT NULL
     key_prefix = Column(String, nullable=False, index=True)
+    key_hash = Column(String, nullable=False, unique=True)
 
-    # matches DB: NOT NULL
-    key_hash = Column(String, nullable=False, unique=True, index=True)
-
-    # matches DB: NOT NULL
+    scope = Column(String, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
-
-    # matches DB: nullable
     last_used_at = Column(DateTime(timezone=True), nullable=True)
-
-    # matches DB: NOT NULL
-    scope = Column(String, nullable=False, default="default")
-
-    # matches DB: nullable
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
 
-    # matches your desired schema (now migrated): nullable
-    expires_at = Column(DateTime(timezone=True), nullable=True)
-
-    # relationship
     project = relationship("Project", back_populates="api_keys")
