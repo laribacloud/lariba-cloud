@@ -12,6 +12,7 @@ from src.database.deps import get_db
 from src.models.api_key import ApiKey
 from src.models.project import Project
 from src.models.user import User
+from src.models.project_member import ProjectMember
 from src.services.api_keys import hash_api_key
 
 router = APIRouter(prefix="/api-keys", tags=["API Keys"])
@@ -56,7 +57,7 @@ class ApiKeyListItem(BaseModel):
 
 
 # =========================================================
-# Machine auth: X-API-Key dependency (for runtime service calls)
+# Machine auth: X-API-Key dependency (runtime service calls)
 # =========================================================
 
 def get_project_and_key_from_api_key(
@@ -108,20 +109,35 @@ def require_scope(required_scope: str):
 
 
 # =========================================================
-# Human auth helpers: JWT + ownership
+# Human auth helpers: JWT + membership role
 # =========================================================
 
-def require_project_owner(
+def require_project_role(
     project_id: UUID,
     db: Session,
     current_user: User,
-) -> Project:
+    required_role: str = "admin",
+) -> Tuple[Project, ProjectMember]:
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not project owner")
-    return project
+
+    membership = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a project member")
+
+    # simple role rule: admin can do admin things; members cannot
+    if required_role == "admin" and membership.role != "admin":
+        raise HTTPException(status_code=403, detail="Project admin required")
+
+    return project, membership
 
 
 # =========================================================
@@ -152,7 +168,7 @@ def me(auth: Tuple[Project, ApiKey] = Depends(get_project_and_key_from_api_key))
 
 
 # ---------------------------------------------------------
-# Bootstrap (JWT ONLY): create FIRST admin key for a project
+# Bootstrap (JWT + project admin): create FIRST admin key
 # Allowed ONLY if project currently has 0 API keys
 # ---------------------------------------------------------
 @router.post("/bootstrap", response_model=CreateApiKeyResponse)
@@ -161,7 +177,9 @@ def bootstrap_admin_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = require_project_owner(payload.project_id, db=db, current_user=current_user)
+    project, _membership = require_project_role(
+        payload.project_id, db=db, current_user=current_user, required_role="admin"
+    )
 
     existing_count = db.query(ApiKey).filter(ApiKey.project_id == project.id).count()
     if existing_count > 0:
@@ -203,7 +221,7 @@ def bootstrap_admin_key(
 
 
 # ---------------------------------------------------------
-# Create key (JWT owner only)
+# Create key (JWT + project admin)
 # ---------------------------------------------------------
 @router.post("", response_model=CreateApiKeyResponse)
 def create_api_key(
@@ -211,7 +229,9 @@ def create_api_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = require_project_owner(payload.project_id, db=db, current_user=current_user)
+    project, _membership = require_project_role(
+        payload.project_id, db=db, current_user=current_user, required_role="admin"
+    )
 
     plaintext_key = "lk_" + secrets.token_urlsafe(32)
     key_hash = hash_api_key(plaintext_key)
@@ -246,7 +266,7 @@ def create_api_key(
 
 
 # ---------------------------------------------------------
-# List keys (JWT owner only)
+# List keys (JWT + project admin)
 # GET /v1/api-keys?project_id=<uuid>
 # ---------------------------------------------------------
 @router.get("", response_model=List[ApiKeyListItem])
@@ -255,7 +275,9 @@ def list_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = require_project_owner(project_id, db=db, current_user=current_user)
+    project, _membership = require_project_role(
+        project_id, db=db, current_user=current_user, required_role="admin"
+    )
 
     keys = (
         db.query(ApiKey)
@@ -280,7 +302,7 @@ def list_api_keys(
 
 
 # ---------------------------------------------------------
-# Revoke key (JWT owner only)
+# Revoke key (JWT + project admin)
 # ---------------------------------------------------------
 @router.post("/{api_key_id}/revoke")
 def revoke_api_key(
@@ -292,7 +314,9 @@ def revoke_api_key(
     if not key:
         raise HTTPException(status_code=404, detail="API key not found")
 
-    _project = require_project_owner(key.project_id, db=db, current_user=current_user)
+    _project, _membership = require_project_role(
+        key.project_id, db=db, current_user=current_user, required_role="admin"
+    )
 
     if key.revoked_at is not None:
         return {"message": "API key already revoked"}

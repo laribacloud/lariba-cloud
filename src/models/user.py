@@ -14,7 +14,7 @@ class User(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
 
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, default="You")
     email = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(String, nullable=False)
 
@@ -24,4 +24,12 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+    # Owner relationship
     projects = relationship("Project", back_populates="owner")
+
+    # Membership relationship
+    project_memberships = relationship(
+        "ProjectMember",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
