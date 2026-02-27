@@ -30,7 +30,25 @@ class Organization(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    owner = relationship("User", back_populates="organizations")
+    # relationships
+    owner = relationship("User")
 
-    members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
-    projects = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
+    members = relationship(
+        "OrganizationMember",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+    # ✅ THIS FIXES YOUR ERROR (something expects Organization.projects)
+    projects = relationship(
+        "Project",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+    # invites (Policy A)
+    invites = relationship(
+        "OrganizationInvite",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )

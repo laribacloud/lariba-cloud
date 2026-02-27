@@ -39,7 +39,18 @@ class Project(Base):
 
     # relationships
     owner = relationship("User", back_populates="projects")
+
+    # ✅ matching back_populates for Organization.projects
     organization = relationship("Organization", back_populates="projects")
 
-    api_keys = relationship("ApiKey", back_populates="project", cascade="all, delete-orphan")
-    members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+    api_keys = relationship(
+        "ApiKey",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+
+    members = relationship(
+        "ProjectMember",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
