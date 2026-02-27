@@ -32,15 +32,15 @@ class ProjectResponse(BaseModel):
 
 
 def require_org_member(org_id: UUID, db: Session, user: User) -> Organization:
+    """
+    Policy B1:
+    - Any organization member (role: owner/admin/member) can create projects.
+    - Must at least be a member.
+    """
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    # Owner is always allowed
-    if org.owner_id == user.id:
-        return org
-
-    # Otherwise must exist in organization_members
     membership = (
         db.query(OrganizationMember)
         .filter(
@@ -49,7 +49,13 @@ def require_org_member(org_id: UUID, db: Session, user: User) -> Organization:
         )
         .first()
     )
-    if not membership:
+
+    # If you allow implicit membership via org.owner_id, keep this:
+    if org.owner_id == user.id and membership is None:
+        # owner exists but membership row missing; treat as allowed
+        return org
+
+    if membership is None:
         raise HTTPException(status_code=403, detail="Not an organization member")
 
     return org
@@ -61,10 +67,10 @@ def create_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ✅ POLICY CHANGE: any org member (including owner) may create projects
+    # ✅ B1: must be org member (not necessarily admin)
     _org = require_org_member(payload.organization_id, db=db, user=current_user)
 
-    # slug unique check (global)
+    # Slug unique (global)
     existing = db.query(Project).filter(Project.slug == payload.slug).first()
     if existing:
         raise HTTPException(status_code=409, detail="Slug already exists")
@@ -73,13 +79,13 @@ def create_project(
         organization_id=payload.organization_id,
         name=payload.name,
         slug=payload.slug,
-        owner_id=current_user.id,  # keep for now (legacy / convenience)
+        owner_id=current_user.id,  # keep for now
     )
     db.add(project)
     db.commit()
     db.refresh(project)
 
-    # creator becomes admin project member (within the project)
+    # Creator becomes project admin
     db.add(ProjectMember(project_id=project.id, user_id=current_user.id, role="admin"))
     db.commit()
 
@@ -98,7 +104,7 @@ def list_my_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # list projects where the user is a project member
+    # list projects where you're a project member
     projects = (
         db.query(Project)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
