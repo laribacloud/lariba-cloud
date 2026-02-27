@@ -13,7 +13,7 @@ from src.models.api_key import ApiKey
 from src.models.project import Project
 from src.models.user import User
 from src.services.api_keys import hash_api_key
-from src.services.rbac import require_project_role
+from src.api.deps.project_access import require_project_admin
 
 router = APIRouter(prefix="/api-keys", tags=["API Keys"])
 
@@ -57,7 +57,7 @@ class ApiKeyListItem(BaseModel):
 
 
 # =========================================================
-# Machine auth: X-API-Key dependency
+# Machine auth (X-API-Key)
 # =========================================================
 
 def get_project_and_key_from_api_key(
@@ -85,7 +85,6 @@ def get_project_and_key_from_api_key(
     if not project:
         raise HTTPException(status_code=401, detail="Project not found")
 
-    # best-effort last_used_at update
     key.last_used_at = now
     db.commit()
     db.refresh(key)
@@ -94,10 +93,6 @@ def get_project_and_key_from_api_key(
 
 
 def require_scope(required_scope: str):
-    """
-    Dependency factory for MACHINE auth scope checks (X-API-Key).
-    Usage: Depends(require_scope("admin"))
-    """
     def dependency(
         auth: Tuple[Project, ApiKey] = Depends(get_project_and_key_from_api_key),
     ) -> Tuple[Project, ApiKey]:
@@ -142,7 +137,7 @@ def me(auth: Tuple[Project, ApiKey] = Depends(get_project_and_key_from_api_key))
 
 
 # ---------------------------------------------------------
-# Bootstrap FIRST admin key
+# Bootstrap FIRST admin key (project admin only)
 # ---------------------------------------------------------
 @router.post("/bootstrap", response_model=CreateApiKeyResponse)
 def bootstrap_admin_key(
@@ -151,12 +146,10 @@ def bootstrap_admin_key(
     current_user: User = Depends(get_current_user),
 ):
 
-    # Require project admin (org owner will pass via RBAC)
-    project = require_project_role(
-        payload.project_id,
+    project, _membership = require_project_admin(
+        project_id=payload.project_id,
         db=db,
         current_user=current_user,
-        min_role="admin",
     )
 
     existing_count = db.query(ApiKey).filter(ApiKey.project_id == project.id).count()
@@ -208,11 +201,10 @@ def create_api_key(
     current_user: User = Depends(get_current_user),
 ):
 
-    project = require_project_role(
-        payload.project_id,
+    project, _membership = require_project_admin(
+        project_id=payload.project_id,
         db=db,
         current_user=current_user,
-        min_role="admin",
     )
 
     plaintext_key = "lk_" + secrets.token_urlsafe(32)
@@ -257,11 +249,10 @@ def list_api_keys(
     current_user: User = Depends(get_current_user),
 ):
 
-    project = require_project_role(
-        project_id,
+    project, _membership = require_project_admin(
+        project_id=project_id,
         db=db,
         current_user=current_user,
-        min_role="admin",
     )
 
     keys = (
@@ -300,11 +291,10 @@ def revoke_api_key(
     if not key:
         raise HTTPException(status_code=404, detail="API key not found")
 
-    require_project_role(
-        key.project_id,
+    require_project_admin(
+        project_id=key.project_id,
         db=db,
         current_user=current_user,
-        min_role="admin",
     )
 
     if key.revoked_at is not None:

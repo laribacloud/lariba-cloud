@@ -14,6 +14,4 @@ app.include_router(projects_router, prefix="/v1")
 app.include_router(api_keys_router, prefix="/v1")
 app.include_router(organizations_router, prefix="/v1")
 app.include_router(organization_invites_router, prefix="/v1")
-
-# ✅ ADD THIS
 app.include_router(project_members_router, prefix="/v1")
