@@ -45,6 +45,13 @@ class InviteResponse(BaseModel):
 
 
 class CreateInviteResponse(InviteResponse):
+    """
+    Returned only when:
+    - creating a brand-new invite
+    - resending (rotating token) for a pending invite
+
+    Token is returned ONLY in these two cases.
+    """
     token: str
     invite_link: str
 
@@ -61,6 +68,11 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def build_invite_link(invite_id: UUID, token: str) -> str:
+    # Relative link so you can copy/paste into curl
+    return f"/v1/organizations/invites/{invite_id}/accept?token={token}"
+
+
 def require_org_role(
     organization_id: UUID,
     db: Session,
@@ -71,6 +83,7 @@ def require_org_role(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # owner is always allowed
     if org.owner_id == user.id:
         return org
 
@@ -82,6 +95,7 @@ def require_org_role(
         )
         .first()
     )
+
     if not member:
         raise HTTPException(status_code=403, detail="Not an organization member")
 
@@ -107,8 +121,16 @@ def to_invite_response(inv: OrganizationInvite) -> InviteResponse:
     )
 
 
-def build_invite_link(invite_id: UUID, token: str) -> str:
-    return f"/v1/organizations/invites/{invite_id}/accept?token={token}"
+def _rotate_token(inv: OrganizationInvite) -> str:
+    """
+    Rotates token + extends expiry.
+    Returns the NEW plaintext token.
+    """
+    plaintext_token = "oi_" + secrets.token_urlsafe(32)
+    inv.token_hash = hash_token(plaintext_token)
+    inv.token_prefix = plaintext_token[:10]
+    inv.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
+    return plaintext_token
 
 
 # =========================================================
@@ -156,8 +178,6 @@ def create_invite(
     now = datetime.now(timezone.utc)
 
     plaintext_token = "oi_" + secrets.token_urlsafe(32)
-    token_hash = hash_token(plaintext_token)
-    token_prefix = plaintext_token[:10]
 
     inv = OrganizationInvite(
         organization_id=organization_id,
@@ -167,8 +187,8 @@ def create_invite(
         invited_by_user_id=current_user.id,
         created_at=now,
         expires_at=now + timedelta(days=INVITE_TTL_DAYS),
-        token_hash=token_hash,
-        token_prefix=token_prefix,
+        token_hash=hash_token(plaintext_token),
+        token_prefix=plaintext_token[:10],
     )
 
     db.add(inv)
@@ -201,6 +221,38 @@ def list_invites(
     return [to_invite_response(i) for i in invites]
 
 
+@router.post("/invites/{invite_id}/resend", response_model=CreateInviteResponse)
+def resend_invite(
+    invite_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Admin-only. Rotates token + extends expiry for a PENDING invite.
+    Returns the NEW token ONCE (like "email resend").
+    """
+    inv = db.query(OrganizationInvite).filter(OrganizationInvite.id == invite_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invite not found")
+
+    _org = require_org_role(inv.organization_id, db, current_user, "admin")
+
+    if inv.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Invite is {inv.status}")
+
+    new_token = _rotate_token(inv)
+
+    db.commit()
+    db.refresh(inv)
+
+    base = to_invite_response(inv)
+    return CreateInviteResponse(
+        **base.model_dump(),
+        token=new_token,
+        invite_link=build_invite_link(inv.id, new_token),
+    )
+
+
 @router.post("/invites/{invite_id}/accept", response_model=InviteResponse)
 def accept_invite(
     invite_id: UUID,
@@ -214,7 +266,7 @@ def accept_invite(
 
     now = datetime.now(timezone.utc)
 
-    # ✅ Token check FIRST (prevents leaking invite state)
+    # Token validation FIRST (prevents state leaks)
     if not hmac.compare_digest(hash_token(token), inv.token_hash):
         raise HTTPException(status_code=403, detail="Invalid invite token")
 
