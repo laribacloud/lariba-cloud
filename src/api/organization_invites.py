@@ -1,8 +1,11 @@
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import secrets
+import hashlib
+import hmac
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session
 
@@ -14,6 +17,8 @@ from src.models.organization_invite import OrganizationInvite
 from src.models.user import User
 
 router = APIRouter(prefix="/organizations", tags=["Organization Invites"])
+
+INVITE_TTL_DAYS = 7
 
 
 # =========================================================
@@ -34,13 +39,27 @@ class InviteResponse(BaseModel):
     invited_by_user_id: Optional[str]
     accepted_by_user_id: Optional[str]
     created_at: str
+    expires_at: str
     accepted_at: Optional[str]
     revoked_at: Optional[str]
+
+
+class CreateInviteResponse(InviteResponse):
+    token: str
+    invite_link: str
 
 
 # =========================================================
 # Helpers
 # =========================================================
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 def require_org_role(
     organization_id: UUID,
@@ -52,7 +71,6 @@ def require_org_role(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    # owner is always allowed
     if org.owner_id == user.id:
         return org
 
@@ -67,7 +85,6 @@ def require_org_role(
     if not member:
         raise HTTPException(status_code=403, detail="Not an organization member")
 
-    # simple role rule
     if required_role == "admin" and member.role not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Requires org role: admin")
 
@@ -84,75 +101,86 @@ def to_invite_response(inv: OrganizationInvite) -> InviteResponse:
         invited_by_user_id=str(inv.invited_by_user_id) if inv.invited_by_user_id else None,
         accepted_by_user_id=str(inv.accepted_by_user_id) if inv.accepted_by_user_id else None,
         created_at=inv.created_at.isoformat(),
+        expires_at=inv.expires_at.isoformat(),
         accepted_at=inv.accepted_at.isoformat() if inv.accepted_at else None,
         revoked_at=inv.revoked_at.isoformat() if inv.revoked_at else None,
     )
+
+
+def build_invite_link(invite_id: UUID, token: str) -> str:
+    return f"/v1/organizations/invites/{invite_id}/accept?token={token}"
 
 
 # =========================================================
 # Routes
 # =========================================================
 
-@router.post("/{organization_id}/invites", response_model=InviteResponse)
+@router.post("/{organization_id}/invites", response_model=CreateInviteResponse)
 def create_invite(
     organization_id: UUID,
     payload: CreateInviteRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # org admin/owner
-    _org = require_org_role(organization_id, db=db, user=current_user, required_role="admin")
+    _org = require_org_role(organization_id, db, current_user, "admin")
 
-    # prevent inviting existing members
-    existing_member = (
-        db.query(OrganizationMember)
-        .filter(
-            OrganizationMember.organization_id == organization_id,
-            OrganizationMember.user.has(email=payload.email),  # works if relationship exists
-        )
-        .first()
-    )
-    # If the relationship check above is too fancy for your current model, we’ll do a safer fallback:
-    if not existing_member:
-        user_row = db.query(User).filter(User.email == payload.email).first()
-        if user_row:
-            existing_member = (
-                db.query(OrganizationMember)
-                .filter(
-                    OrganizationMember.organization_id == organization_id,
-                    OrganizationMember.user_id == user_row.id,
-                )
-                .first()
+    email_norm = normalize_email(str(payload.email))
+
+    # Prevent inviting existing members
+    user_row = db.query(User).filter(User.email == email_norm).first()
+    if user_row:
+        existing_member = (
+            db.query(OrganizationMember)
+            .filter(
+                OrganizationMember.organization_id == organization_id,
+                OrganizationMember.user_id == user_row.id,
             )
-    if existing_member:
-        raise HTTPException(status_code=409, detail="User is already an organization member")
+            .first()
+        )
+        if existing_member:
+            raise HTTPException(status_code=409, detail="User is already an organization member")
 
-    # only allow one pending invite per org+email
+    # Prevent duplicate pending invite
     pending = (
         db.query(OrganizationInvite)
         .filter(
             OrganizationInvite.organization_id == organization_id,
-            OrganizationInvite.email == str(payload.email).lower(),
+            OrganizationInvite.email == email_norm,
             OrganizationInvite.status == "pending",
         )
         .first()
     )
     if pending:
-        return to_invite_response(pending)
+        raise HTTPException(status_code=409, detail="Pending invite already exists")
 
     now = datetime.now(timezone.utc)
+
+    plaintext_token = "oi_" + secrets.token_urlsafe(32)
+    token_hash = hash_token(plaintext_token)
+    token_prefix = plaintext_token[:10]
+
     inv = OrganizationInvite(
         organization_id=organization_id,
-        email=str(payload.email).lower(),
+        email=email_norm,
         role=payload.role,
         status="pending",
         invited_by_user_id=current_user.id,
         created_at=now,
+        expires_at=now + timedelta(days=INVITE_TTL_DAYS),
+        token_hash=token_hash,
+        token_prefix=token_prefix,
     )
+
     db.add(inv)
     db.commit()
     db.refresh(inv)
-    return to_invite_response(inv)
+
+    base = to_invite_response(inv)
+    return CreateInviteResponse(
+        **base.model_dump(),
+        token=plaintext_token,
+        invite_link=build_invite_link(inv.id, plaintext_token),
+    )
 
 
 @router.get("/{organization_id}/invites", response_model=List[InviteResponse])
@@ -161,7 +189,7 @@ def list_invites(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _org = require_org_role(organization_id, db=db, user=current_user, required_role="admin")
+    _org = require_org_role(organization_id, db, current_user, "admin")
 
     invites = (
         db.query(OrganizationInvite)
@@ -169,12 +197,14 @@ def list_invites(
         .order_by(OrganizationInvite.created_at.desc())
         .all()
     )
+
     return [to_invite_response(i) for i in invites]
 
 
 @router.post("/invites/{invite_id}/accept", response_model=InviteResponse)
 def accept_invite(
     invite_id: UUID,
+    token: str = Query(..., min_length=10),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -182,14 +212,21 @@ def accept_invite(
     if not inv:
         raise HTTPException(status_code=404, detail="Invite not found")
 
+    now = datetime.now(timezone.utc)
+
+    # ✅ Token check FIRST (prevents leaking invite state)
+    if not hmac.compare_digest(hash_token(token), inv.token_hash):
+        raise HTTPException(status_code=403, detail="Invalid invite token")
+
     if inv.status != "pending":
         raise HTTPException(status_code=409, detail=f"Invite is {inv.status}")
 
-    # A1: must match email of current account
+    if inv.expires_at <= now:
+        raise HTTPException(status_code=410, detail="Invite expired")
+
     if inv.email.lower() != current_user.email.lower():
         raise HTTPException(status_code=403, detail="Invite email does not match your account")
 
-    # create membership if missing
     existing_member = (
         db.query(OrganizationMember)
         .filter(
@@ -198,6 +235,7 @@ def accept_invite(
         )
         .first()
     )
+
     if not existing_member:
         db.add(
             OrganizationMember(
@@ -209,10 +247,11 @@ def accept_invite(
 
     inv.status = "accepted"
     inv.accepted_by_user_id = current_user.id
-    inv.accepted_at = datetime.now(timezone.utc)
+    inv.accepted_at = now
 
     db.commit()
     db.refresh(inv)
+
     return to_invite_response(inv)
 
 
@@ -226,8 +265,7 @@ def revoke_invite(
     if not inv:
         raise HTTPException(status_code=404, detail="Invite not found")
 
-    # must be org admin/owner to revoke
-    _org = require_org_role(inv.organization_id, db=db, user=current_user, required_role="admin")
+    _org = require_org_role(inv.organization_id, db, current_user, "admin")
 
     if inv.status != "pending":
         raise HTTPException(status_code=409, detail=f"Invite is {inv.status}")
@@ -237,4 +275,5 @@ def revoke_invite(
 
     db.commit()
     db.refresh(inv)
+
     return to_invite_response(inv)
