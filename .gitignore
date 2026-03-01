@@ -168,3 +168,4 @@ var/
 venv.bak/
 venv/
 wheels/
+.venv/
